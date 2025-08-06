@@ -878,21 +878,8 @@ def close_to_border(contour: np.ndarray, image: np.ndarray, bias: int) -> bool:
         return False
 
 
-if __name__ == "__main__":
-    # config = read_config("test_data/configs/configure.yaml")
-    # res = detect_colony_single_image(
-    #     "test_data/parameters/calib_parameter.npz",
-    #     "test_data/input/FT4AR80_20230901142357.bmp",
-    #     "test_data/input/FT4AR80_20230901142402.bmp",
-    #     config,
-    # )
-    # detect_colony(
-    #     "test_data/input_png",
-    #     "test_data/output_01",
-    #     "test_data/parameters/calib_parameter.npz",
-    #     "test_data/configs/configure.yaml",
-    # )
-
+def main():
+    """Main CLI entry point for detect_colonies."""
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -948,3 +935,7 @@ if __name__ == "__main__":
         raise ValueError(
             f"Input path: {args.input_path} is neither a file nor a directory."
         )
+
+
+if __name__ == "__main__":
+    main()

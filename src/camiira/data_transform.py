@@ -153,7 +153,8 @@ def _add_pca_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-if __name__ == "__main__":
+def main():
+    """Main CLI entry point for data_transform."""
     # example usages:
     # 1. Convert one hyperspectral image from .bil to .npy
     # python3 bil2numpy.py bil2npy --metadata <hdr_path> bil2npy <bil_path> --output_dir <output_dir>
@@ -298,3 +299,7 @@ if __name__ == "__main__":
     else:
         parser.print_help()
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

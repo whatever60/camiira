@@ -1028,30 +1028,8 @@ def _tsp(
     return np.array(permutation2)
 
 
-if __name__ == "__main__":
-    # pick_colony_init(
-    #     image_dir="test_data/input_png",
-    #     input_dir="test_data/output_01",
-    #     output_dir="test_data/output_02",
-    #     metadata_path="test_data/input/metadata.csv",
-    #     config_path="test_data/configs/configure.yaml",
-    # )
-
-    # pick_colony_post(
-    #     image_dir="test_data/input_png",
-    #     data_dir="test_data/output_02",
-    #     metadata_path="test_data/input/metadata.csv",
-    #     start_from="init",
-    # )
-
-    # pick_colony_final(
-    #     image_dir="test_data/input_png",
-    #     data_dir="test_data/output_02",
-    #     metadata_path="test_data/input/metadata.csv",
-    #     output_dir="test_data/output_03",
-    #     # tsp_method="heuristic",
-    #     tsp_method="",
-    # )
+def main():
+    """Main CLI entry point for select_colonies."""
     matplotlib.use('agg')
     plt.rcParams["pdf.fonttype"] = 42
     plt.rcParams["svg.fonttype"] = "none"
@@ -1201,3 +1179,7 @@ if __name__ == "__main__":
             tsp_method=args.tsp_method,
             _seed=args.seed,
         )
+
+
+if __name__ == "__main__":
+    main()
