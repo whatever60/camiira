@@ -1,4 +1,4 @@
-# Computational pipeline for Culturomics by Automated Microbiome Imaging and Isolation (CAMII)
+# CAMIIRA: The CAMII Readout Analysis framework
 
 Future plans include:
 - Incorporation of hyperspectral images for diversity-optimized picking (ongoing),
@@ -16,8 +16,8 @@ pip install camiira
 Or install from source:
 
 ```bash
-git clone https://github.com/whatever60/CAMII_dev.git
-cd CAMII_dev
+git clone https://github.com/whatever60/camiira.git
+cd camiira
 pip install -e .
 ```
 
