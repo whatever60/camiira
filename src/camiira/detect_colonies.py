@@ -16,8 +16,8 @@ from skimage.feature import peak_local_max
 from skimage.segmentation import random_walker
 from rich import print as rprint
 
-from utils import read_config, read_file_list, add_contours
-from detector import CAMIIColonyDetector
+from .utils import read_config, read_file_list, add_contours
+from .detector import CAMIIColonyDetector
 
 
 DATA_DIR = f"{os.path.dirname(__file__)}/test_data"

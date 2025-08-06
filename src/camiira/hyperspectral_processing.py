@@ -226,7 +226,7 @@ def process_hyperspectral_image(
     if mask_crop is not None:
         if cropping is not None:
             raise ValueError("Only one of cropping and mask_crop should be provided")
-        from utils import _coco_to_contours
+        from .utils import _coco_to_contours
 
         if mask_crop.endswith(".json"):  # coco json format
             with open(mask_crop) as f:
@@ -253,7 +253,7 @@ def process_hyperspectral_image(
             arr.shape[1] // zoom_f : (zoom_f - 1) * arr.shape[1] // zoom_f,
         ] = 1
     elif mask_subset is not None:
-        from utils import _coco_to_contours
+        from .utils import _coco_to_contours
 
         with open(mask_subset) as f:
             masks = _coco_to_contours(json.load(f))

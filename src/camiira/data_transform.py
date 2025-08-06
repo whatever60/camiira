@@ -10,7 +10,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
-from hyperspectral_processing import process_bil2npz, process_npz2png
+from .hyperspectral_processing import process_bil2npz, process_npz2png
 
 
 def load_bmp_as_rgba(filepath: str) -> np.ndarray:

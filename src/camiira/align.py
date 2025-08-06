@@ -17,8 +17,8 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from rich import print as rprint
 
-from hyperspectral_processing import hsi_pca
-from utils import _coco_to_contours
+from .hyperspectral_processing import hsi_pca
+from .utils import _coco_to_contours
 
 
 class PatienceLogger:

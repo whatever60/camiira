@@ -50,7 +50,7 @@ import seaborn as sns
 from rich import print as rprint
 from tqdm.auto import tqdm, trange
 
-from utils import read_config, add_contours, _coco_to_contours, read_file_list
+from .utils import read_config, add_contours, _coco_to_contours, read_file_list
 
 
 def colony_feat_pca(df_contour: pl.DataFrame) -> pl.DataFrame:

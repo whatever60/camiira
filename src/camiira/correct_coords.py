@@ -41,11 +41,8 @@ def coordinate_correction(input_dir, parameter_path: str):
         coor.write_csv(out_name, include_header=False)
 
 
-if __name__ == "__main__":
-    # coordinate_correction(
-    #     "test_data/output_03",
-    #     "test_data/parameters/correction_params.json",
-    # )
+def main():
+    """Main CLI entry point for correct_coords."""
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--input_dir", type=str, help="path to the input dir")
     parser.add_argument(
@@ -53,3 +50,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     coordinate_correction(args.input_dir, args.parameter_path)
+
+
+if __name__ == "__main__":
+    main()

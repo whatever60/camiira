@@ -18,7 +18,7 @@ from rich import print as rprint
 
 # from align import find_affine, get_query2target_func, find_mutual_pairs
 from align import Aligner
-from utils import _get_time_points, read_table
+from .utils import _get_time_points, read_table
 
 
 def _read_colony_metadata(
@@ -392,7 +392,8 @@ def infer_interaction(
     ).sort_values(["receptor", "donor"])
 
 
-if __name__ == "__main__":
+def main():
+    """Main CLI entry point for isolate_interaction."""
     parser = argparse.ArgumentParser(
         description="Isolate interaction inference from CAMII data."
     )
@@ -514,3 +515,7 @@ if __name__ == "__main__":
     # )
     # count_df.columns = ["receptor", "num_interactions"]
     # interaction_summary_df = pd.concat([interaction_summary_df, count_df])
+
+
+if __name__ == "__main__":
+    main()

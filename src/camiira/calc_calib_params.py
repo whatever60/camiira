@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 import cv2 as cv
 
-from utils import read_config, read_file_list
+from .utils import read_config, read_file_list
 
 
 def calib(input_dir: str, output_path: str, config_path: str) -> None:
@@ -61,7 +61,8 @@ def _calc_calib_bg(
     return gaussian_input / gaussian_input.mean()
 
 
-if __name__ == "__main__":
+def main():
+    """Main CLI entry point for calc_calib_params."""
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -85,3 +86,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     calib(args.input_dir, args.output_dir, args.config_path)
+
+
+if __name__ == "__main__":
+    main()

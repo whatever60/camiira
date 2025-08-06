@@ -1,6 +1,6 @@
 [project]
 name = "camiira"
-version = "2.0.0"
+version = "0.1.0"
 description = "The CAMII readout analysis framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,6 +18,7 @@ dependencies = [
     "tqdm>=4.66.1",
     "scipy>=1.13.0",
     "scikit-image>=0.23.2",
+    "scikit-learn>=1.6.1",
     "dendropy>=4.6.1",
     "transformers>=4.39.1",
     "pycirclize>=1.1.0",
@@ -27,5 +28,14 @@ dependencies = [
     "python-tsp>=0.5.0",
     "seaborn>=0.13.1",
     "pyyaml>=6.0.1",
-    "biom-format>=2.1.15"
+    "biom-format>=2.1.15",
 ]
+
+[project.scripts]
+"detect_colonies.py" = "camiira.cli:detect_colonies"
+"calc_calib_params.py" = "camiira.cli:calc_calib_params"
+"correct_coords.py" = "camiira.cli:correct_coords"
+"data_transform.py" = "camiira.cli:data_transform"
+"draw_interaction.py" = "camiira.cli:draw_interaction"
+"isolate_interaction.py" = "camiira.cli:isolate_interaction"
+"select_colonies.py" = "camiira.cli:select_colonies"

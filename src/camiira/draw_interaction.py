@@ -643,7 +643,8 @@ def read_isolate_interaction(
     return (node_df, interaction_df, tree_16s, tree_its)
 
 
-if __name__ == "__main__":
+def main():
+    """Main CLI entry point for draw_interaction."""
     plt.rcParams["pdf.fonttype"] = 42
     plt.rcParams["svg.fonttype"] = "none"
 
@@ -900,3 +901,7 @@ if __name__ == "__main__":
     fig.savefig(out_fig, bbox_inches="tight", dpi=300)
     if not out_fig.endswith(".pdf"):
         fig.savefig(os.path.splitext(out_fig)[0] + ".pdf", bbox_inches="tight", dpi=300)
+
+
+if __name__ == "__main__":
+    main()
