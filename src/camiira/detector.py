@@ -25,6 +25,7 @@ class CAMIIColonyDetector:
         crop_x_max: int | None = None,
         crop_y_min: int | None = None,
         crop_y_max: int | None = None,
+        skip_clahe: bool = False,
     ):
         self.bg_gaussian_kernel = bg_gaussian_kernel
         self.bg_threshold_block_size = bg_threshold_block_size
@@ -33,6 +34,7 @@ class CAMIIColonyDetector:
         self.canny_upper_percentile = canny_upper_percentile
         self.clahe_clip_limit = clahe_clip_limit
         self.clahe_tile_grid_size = clahe_tile_grid_size
+        self.skip_clahe = skip_clahe
         self.calib_param = self.load_calibration(calib_param)
         self.calib_contrast_alpha = calib_contrast_alpha
         self.calib_contrast_beta = calib_contrast_beta
@@ -75,8 +77,6 @@ class CAMIIColonyDetector:
                 )
             if calib_param.endswith(".npy"):
                 calib_param: np.ndarray = np.load(calib_param)
-            elif calib_param.endswith(".npz"):
-                calib_param: np.ndarray = np.load(calib_param)["arr_0"]
             else:
                 raise ValueError(
                     f"Unsupported calibration parameter file format: {calib_param}"
@@ -119,10 +119,13 @@ class CAMIIColonyDetector:
             gray_image = corrected_image
         self.image_corrected_gs = gray_image
 
-        clahe_obj = cv.createCLAHE(
-            clipLimit=self.clahe_clip_limit, tileGridSize=self.clahe_tile_grid_size
-        )
-        clahed = clahe_obj.apply(gray_image.astype(np.uint8))
+        if self.skip_clahe:
+            clahed = gray_image.astype(np.uint8)
+        else:
+            clahe_obj = cv.createCLAHE(
+                clipLimit=self.clahe_clip_limit, tileGridSize=self.clahe_tile_grid_size
+            )
+            clahed = clahe_obj.apply(gray_image.astype(np.uint8))
 
         # Step 1: Filter2D
         filtered_image = cv.filter2D(
@@ -201,8 +204,13 @@ class CAMIIColonyDetector:
                 axs[i].set_title("After Calibration")
             i += 1
 
-            axs[i].imshow(clahed, cmap="gray")
-            axs[i].set_title("After CLAHE")
+            if self.skip_clahe:
+                axs[i].axis('off')
+                axs[i].text(0.5, 0.5, 'CLAHE Skipped', ha='center', va='center', fontsize=12)
+                axs[i].set_title("CLAHE (Skipped)")
+            else:
+                axs[i].imshow(clahed, cmap="gray")
+                axs[i].set_title("After CLAHE")
             i += 1
 
             axs[i].imshow(filtered_image, cmap="gray")
