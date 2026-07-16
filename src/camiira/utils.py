@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 from os import path as op
 from collections import defaultdict
 import yaml
@@ -58,10 +59,10 @@ def parse_dir_for_time_series(input_dir, ext: str = "png") -> dict[str, dict[int
     """
     Parses a directory containing time series images.
 
-    File name format is assumed to be "{barcode}_{time_point}.png". Time points must be
-        positive integers. If time point is absent, i.e. "{barcode}.png", time point
-        will be assumed to be -1. That is, this image will be the default for this
-        barcode.
+    File names may be either ``{barcode}_d{time_point}.png`` or ``{barcode}.png``.
+    Time points must be non-negative integers. An image without the ``_dN`` suffix is
+    assigned time point ``-1``, so it naturally participates in ``min``/``max``
+    selection. Barcodes must not contain underscores.
 
     Args:
         input_dir (str): The path to the input directory.
@@ -74,51 +75,73 @@ def parse_dir_for_time_series(input_dir, ext: str = "png") -> dict[str, dict[int
     if not op.isdir(input_dir):
         raise ValueError(f"Directory {input_dir} not found.")
     image_time_series = defaultdict(dict)
-    for image in sorted(glob.glob(f"{input_dir}/*{ext}")):
-        paths = op.splitext(op.basename(image))[0].split("_")
-        barcode = paths[0]
-        # if not barcode in {'ABYRS855'}:
-        #     continue
-        if len(paths) == 1:
+    suffix = ext if ext.startswith((".", "_")) else f".{ext}"
+    for image in sorted(glob.glob(op.join(input_dir, f"*{suffix}"))):
+        filename = op.basename(image)
+        stem = filename[: -len(suffix)]
+        parts = stem.split("_")
+        if len(parts) == 1:
+            barcode = parts[0]
             time_point = -1
         else:
-            try:
-                time_point = int(paths[1][1:])
-            except ValueError:
-                time_point = -1
+            barcode, time_label = parts
+            if not barcode or not time_label.startswith("d"):
+                raise ValueError
+            time_point = int(time_label[1:])
+            if time_point < 0:
+                raise ValueError
+        if time_point in image_time_series[barcode]:
+            previous = image_time_series[barcode][time_point]
+            raise ValueError(
+                f"Multiple images map to barcode {barcode!r} and time point "
+                f"{time_point}: {previous!r}, {image!r}."
+            )
         image_time_series[barcode][time_point] = image
     return image_time_series
 
 
 def _get_time_points(
-    input_dir: dict, time: int | str | dict[str, int | str] = "default", ext: str = "png", missing_tp: str = "silence",
+    input_dir: str,
+    time: int | str | dict[str, int | str] = "default",
+    ext: str = "png",
+    missing_tp: str = "silence",
 ) -> tuple[list[str], list[str]]:
     """
-    Processes an rgb dictionary to determine appropriate time points and compiles lists
-    of image labels and corresponding image paths.
+    Selects one image per barcode from a directory of optional time-series images.
 
     Args:
-        input_dir (dict): A dictionary containing image labels as keys and a dictionary
-            containing the time points as keys and the file paths as values.
-        time (int | str): The time point or criteria ('min' or 'max') for image
-            selection.
-        directory (str): The directory name ('red_rgb' or 'white_rgb') indicating the
-            image type.
+        input_dir: Directory containing images named ``{barcode}.png`` or
+            ``{barcode}_d{time_point}.png``.
+        time: Time point ``-1`` (the unsuffixed image), a non-negative time point,
+            ``min``, ``max``, or a per-barcode mapping of those selectors. ``default``
+            is retained as a compatibility alias that prefers the unsuffixed image.
+        ext: Image filename extension.
+        missing_tp: Behavior when an explicitly requested integer time point is absent.
 
     Returns:
-        tuple[list[str], list[str]]: Two lists, one of image labels and another of corresponding image paths.
+        Two lists: image labels and their selected image paths.
     """
     image_label_list = []
     image_list = []
     ts_dict = parse_dir_for_time_series(input_dir, ext=ext)
 
+    if not ts_dict:
+        raise ValueError(f"No .{ext.lstrip('.')} images found in {input_dir}.")
+
     for barcode, time_points in ts_dict.items():
         if isinstance(time, dict):
+            if barcode not in time:
+                raise ValueError(f"No time selector provided for barcode {barcode}.")
             time_b = time[barcode]
         else:
             time_b = time
 
+        if isinstance(time_b, str) and re.fullmatch(r"-?\d+", time_b):
+            time_b = int(time_b)
+
         if isinstance(time_b, int):
+            if time_b < -1:
+                raise ValueError("Time point must be -1 or a non-negative integer.")
             if time_b in time_points:
                 image_label_list.append(barcode)
                 image_list.append(time_points[time_b])
@@ -139,33 +162,20 @@ def _get_time_points(
                         "Must be 'raise', 'print', or 'silence'."
                     )
         else:
-            if time_points:
-                # if -1 is a time point, use it as the default; otherwise, use max
-                if time_b == "default":
-                    if -1 in time_points:
-                        selected_time = -1
-                    else:
-                        # raise ValueError(
-                        #     f"Invalid time argument {time_b}. Must be 'default'."
-                        # )
-                        time_b = "max"
-
-                if time_b != "default":
-                    tps = [i for i in time_points.keys() if i >= 0]
-                    if time_b == "min":
-                        selected_time = min(tps)
-                    elif time_b == "max":
-                        selected_time = max(tps)
-                    else:
-                        raise ValueError(
-                            f"Invalid time argument {time_b}. Must be int, 'min', or 'max'."
-                        )
-                image_label_list.append(barcode)
-                image_list.append(time_points[selected_time])
-            else:
+            if time_b not in {"default", "min", "max"}:
                 raise ValueError(
-                    f"No time points found for barcode {barcode} in {input_dir}."
+                    f"Invalid time argument {time_b}. Must be -1, a non-negative "
+                    "integer, 'default', 'min', or 'max'."
                 )
+
+            if time_b == "default" and -1 in time_points:
+                selected_time = -1
+            else:
+                selector = max if time_b in {"default", "max"} else min
+                selected_time = selector(time_points)
+
+            image_label_list.append(barcode)
+            image_list.append(time_points[selected_time])
 
     return image_label_list, image_list
 
@@ -211,6 +221,12 @@ def read_file_list(
         raise ValueError(
             "Inconsistent labels between red_rgb and white_rgb directories: "
             + "; ".join(error_messages)
+        )
+
+    if not red_labels:
+        raise ValueError(
+            f"No paired red_rgb and white_rgb images matched time selector {time!r} "
+            f"in {input_dir}."
         )
 
     return red_labels, red_images, white_images

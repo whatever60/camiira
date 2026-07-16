@@ -2,6 +2,7 @@
 #*.png
 #*.bmp
 *.ipynb
+!examples/camiira_v0.2.0_colab.ipynb
 
 .vscode
 

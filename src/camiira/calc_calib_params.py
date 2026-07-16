@@ -23,12 +23,30 @@ def calib(input_dir: str, output_path: str, config_path: str) -> None:
     gaussian_kernel = config["calib_gaussian_kernel"]
     gaussian_iteration = config["calib_gaussian_iteration"]
     images_trans = np.stack(
-        crop(cv.imread(i, 0), crop_x_min, crop_x_max, crop_y_min, crop_y_max)
-        for i in image_trans_list
+        [
+            _read_and_crop(
+                image_path,
+                cv.IMREAD_GRAYSCALE,
+                crop_x_min,
+                crop_x_max,
+                crop_y_min,
+                crop_y_max,
+            )
+            for image_path in image_trans_list
+        ]
     ).astype(np.float32)
     images_epi = np.stack(
-        crop(cv.imread(i), crop_x_min, crop_x_max, crop_y_min, crop_y_max)
-        for i in image_epi_list
+        [
+            _read_and_crop(
+                image_path,
+                cv.IMREAD_COLOR,
+                crop_x_min,
+                crop_x_max,
+                crop_y_min,
+                crop_y_max,
+            )
+            for image_path in image_epi_list
+        ]
     ).astype(np.float32)
 
     image_trans_calib = _calc_calib_bg(
@@ -52,6 +70,20 @@ def crop(image, crop_x_min, crop_x_max, crop_y_min, crop_y_max):
     return image[crop_y_min:crop_y_max, crop_x_min:crop_x_max]
 
 
+def _read_and_crop(
+    image_path: str,
+    flags: int,
+    crop_x_min: int | None,
+    crop_x_max: int | None,
+    crop_y_min: int | None,
+    crop_y_max: int | None,
+) -> np.ndarray:
+    image = cv.imread(image_path, flags)
+    if image is None:
+        raise ValueError(f"Could not read calibration image: {image_path}")
+    return crop(image, crop_x_min, crop_x_max, crop_y_min, crop_y_max)
+
+
 def _calc_calib_bg(
     images: np.ndarray, gaussian_kernel: tuple[int, int], gaussian_iteration: int
 ) -> np.ndarray:
@@ -69,13 +101,21 @@ def main():
         "--input_dir",
         type=str,
         required=True,
-        help="Path to the directory containing input images.",
+        help=(
+            "Transformed reference-image directory containing red_rgb and white_rgb "
+            "subdirectories."
+        ),
     )
     parser.add_argument(
+        "--output_path",
         "--output_dir",
+        dest="output_path",
         type=str,
         required=True,
-        help="Path to the directory to save output images.",
+        help=(
+            "Path of the calibration .npz file to create. The .npz extension is "
+            "optional. --output_dir is retained as a deprecated compatibility alias."
+        ),
     )
     parser.add_argument(
         "--config_path",
@@ -85,7 +125,7 @@ def main():
     )
 
     args = parser.parse_args()
-    calib(args.input_dir, args.output_dir, args.config_path)
+    calib(args.input_dir, args.output_path, args.config_path)
 
 
 if __name__ == "__main__":

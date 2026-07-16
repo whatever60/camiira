@@ -7,19 +7,40 @@ Future plans include:
 
 ## Installation
 
-The program runs on Python 3.10+ and can be installed using pip:
+The program runs on Python 3.10+. Install the v0.2.0 release directly from its
+versioned Git tag:
 
 ```bash
-pip install camiira
+pip install "camiira @ git+https://github.com/whatever60/camiira.git@v0.2.0"
 ```
 
-Or install from source:
+To work on the current source checkout instead:
 
 ```bash
 git clone https://github.com/whatever60/camiira.git
 cd camiira
 pip install -e .
 ```
+
+For a reproducible environment using the exact versions in `uv.lock`, use:
+
+```bash
+uv sync --frozen
+source .venv/bin/activate
+```
+
+`pip install -e .` follows the compatible version ranges in `pyproject.toml`; it does
+not install the exact versions recorded in `uv.lock`.
+
+## Try it in Google Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/whatever60/camiira/blob/v0.2.0/examples/camiira_v0.2.0_colab.ipynb)
+
+The Colab tutorial installs CAMIIRA v0.2.0, downloads a versioned public example
+dataset from S3, runs BMP transformation, calibration, and colony detection, and
+checks the generated contour images, metadata CSV files, and COCO JSON annotations.
+The older notebooks in `examples/` remain available for their original specialized
+workflows.
 
 ### Dependencies
 
@@ -67,6 +88,9 @@ To proceed, convert the `.bmp` images into `.png` format with
 data_transform.py process_bmp --input_dir <input_dir> --output_dir <output_dir>
 ```
 
+For time-series experiments, add `--time_point <non-negative integer>`. This produces
+names such as `<plate_barcode>_d5.png`. Omit it for a single image pair per plate.
+
 Images in the output directory will have 4 subdirectories with the following files:
 1. `<output_dir>/red_rgb/<plate_barcode>.png`: the picture taken with red light.
 2. `<output_dir>/red_grayscale/<plate_barcode>.png`: the picture taken with red light in grayscale.
@@ -92,9 +116,18 @@ A `.yaml` file specifying arguments for the pipeline.
 
 Based on a reference panel of CAMII pictures, we calculate calibration parameters to account for non-uniform illumination and other artifacts. In the current implementation, we simply do this by dividing the average value of each pixel by the average over the entire image. Input images in the subsequent steps are then divided by these calibration parameters, so that pixels that typically have extreme values are brought closer to the mean, i.e., background is removed.
 
+First transform the reference BMP pairs with `data_transform.py process_bmp`, then run:
+
 ```bash
-calc_calib_params.py --input_dir <input_dir_with_reference_bmp_pairs> --output_dir <output_dir> --config_path <config_file>
+calc_calib_params.py \
+    --input_dir <transformed_reference_dir> \
+    --output_path <calibration_parameter.npz> \
+    --config_path <config_file>
 ```
+
+`<transformed_reference_dir>` must contain `red_rgb` and `white_rgb` subdirectories.
+The older name `--output_dir` remains available as a compatibility alias, but its value
+has always been a file path rather than a directory.
 
 You can find in this repo pre-computed calibration parameters at `./test_data/parameters/calib_parameter.npz`.
 
@@ -120,13 +153,33 @@ detect_colonies.py \
     --config_path <config_file>
 ```
 
-When input path is a `.png` image, colony detection is performed for this single image, and in the output directory, these outputs will be generated:
+Images without a time suffix are assigned the internal time point `-1`. This makes
+suffixed and unsuffixed images part of the same ordered series. For example, if a plate
+has `<barcode>.png`, `<barcode>_d0.png`, and `<barcode>_d5.png`:
+
+- `--time_label min` selects `<barcode>.png` (`-1`).
+- `--time_label max` selects `<barcode>_d5.png`; this is the CLI default.
+- `--time_label -1`, `0`, or `5` selects that exact image.
+- `--time_label default` preserves the original behavior: it selects the unsuffixed
+  image when present and otherwise selects the largest labelled time point.
+
+If only `<barcode>.png` exists, both `min` and `max` select it. This behavior is useful
+for datasets that mix plates with and without time-labelled images. The barcode itself
+must not contain underscores.
+
+For RGB camera images, `test_data/configs/configure_small.yaml` is the configuration
+used by the demo workflow. Files ending in `_hsi.yaml` are intended for hyperspectral
+PCA images, not the RGB camera input.
+
+When input path is a `.png` image, colony detection is performed for that image without
+requiring the four-subdirectory layout. These outputs are generated:
 - `<barcode>_annot.json`, colony segmentation in coco format.
 - `<barcode>_gs_red_contour.jpg`, segmentation contours overlaid on the grayscale image under red light.
-- `<barcode>_rgb_white_contour.jpg`, segmentation contours overlaid on the RGB image under white light.
 - `<barcode>_metadata.csv`, metadata for each contour (i.e., putative colony).
 
-When input path is a directory, colony detection is performed for all `.png` images in the directory, and the same list of output files will be generated for each image in the directory.
+When input path is a directory, it must contain matching `red_rgb` and `white_rgb`
+subdirectories. Colony detection is performed for every selected plate, and it also
+generates `<barcode>_rgb_white_contour.jpg`.
 
 ### Step 2: Colony selection (initial stage)
 

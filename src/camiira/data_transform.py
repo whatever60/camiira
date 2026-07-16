@@ -3,6 +3,7 @@ import os
 import argparse
 import glob
 import sys
+from collections import defaultdict
 
 import numpy as np
 import cv2 as cv
@@ -65,39 +66,62 @@ def process_bmp(input_dir: str, output_dir: str, time_point: int | None = None) 
     Raw data comes as BMP images with either 3 or 4 channels. We ensure all saved
     images have 4 channels (BGRA), with alpha set to 255 if missing.
 
-    Images are captured in pairs: red light (bottom) and white light (top).
-    This function separates them by index and saves both RGB and grayscale versions.
+    Images are captured in pairs: red light (bottom) and white light (top). For each
+    barcode, this function assigns the first sorted filename to red light and the
+    second to white light, then saves RGB and grayscale versions.
 
     Args:
         input_dir: Directory containing BMP images.
         output_dir: Directory to save PNG images.
         time_point: Optional time point label to append to filenames.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    if time_point is not None and time_point < 0:
+        raise ValueError("Time point should be a non-negative integer")
+
     bmp_paths = sorted(glob.glob(f"{input_dir}/*.bmp"))
+    if not bmp_paths:
+        raise ValueError(f"No .bmp files found in {input_dir}.")
 
-    for i, f in enumerate(tqdm(bmp_paths)):
-        barcode = os.path.splitext(os.path.basename(f))[0].split("_")[0]
+    paths_by_barcode: dict[str, list[str]] = defaultdict(list)
+    for image_path in bmp_paths:
+        barcode = os.path.splitext(os.path.basename(image_path))[0].split("_")[0]
+        paths_by_barcode[barcode].append(image_path)
+
+    invalid_pairs = {
+        barcode: paths
+        for barcode, paths in paths_by_barcode.items()
+        if len(paths) != 2
+    }
+    if invalid_pairs:
+        details = "; ".join(
+            f"{barcode}: {len(paths)} image(s)"
+            for barcode, paths in invalid_pairs.items()
+        )
+        raise ValueError(
+            "Each barcode must have exactly two BMP images (red light followed by "
+            f"white light when filenames are sorted). Invalid pairs: {details}."
+        )
+
+    os.makedirs(output_dir, exist_ok=True)
+    for subdir in ("white_rgb", "white_grayscale", "red_rgb", "red_grayscale"):
+        os.makedirs(os.path.join(output_dir, subdir), exist_ok=True)
+
+    for barcode in tqdm(sorted(paths_by_barcode)):
+        output_label = barcode
         if time_point is not None:
-            if time_point < 0:
-                raise ValueError("Time point should be a non-negative integer")
-            barcode += f"_d{time_point}"
+            output_label += f"_d{time_point}"
 
-        # Prepare subdirectories
-        for subdir in ("white_rgb", "white_grayscale", "red_rgb", "red_grayscale"):
-            os.makedirs(os.path.join(output_dir, subdir), exist_ok=True)
-
-        image = load_bmp_as_rgba(f)
-        if i % 2:  # white light
-            cv.imwrite(os.path.join(output_dir, "white_rgb", f"{barcode}.png"), image)
+        red_path, white_path = sorted(paths_by_barcode[barcode])
+        for light, image_path in (("red", red_path), ("white", white_path)):
+            image = load_bmp_as_rgba(image_path)
             cv.imwrite(
-                os.path.join(output_dir, "white_grayscale", f"{barcode}.png"),
-                cv.cvtColor(image, cv.COLOR_BGRA2GRAY),
+                os.path.join(output_dir, f"{light}_rgb", f"{output_label}.png"),
+                image,
             )
-        else:  # red light
-            cv.imwrite(os.path.join(output_dir, "red_rgb", f"{barcode}.png"), image)
             cv.imwrite(
-                os.path.join(output_dir, "red_grayscale", f"{barcode}.png"),
+                os.path.join(
+                    output_dir, f"{light}_grayscale", f"{output_label}.png"
+                ),
                 cv.cvtColor(image, cv.COLOR_BGRA2GRAY),
             )
 

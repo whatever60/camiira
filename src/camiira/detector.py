@@ -76,7 +76,15 @@ class CAMIIColonyDetector:
                     f"Calibration parameter file '{calib_param}' not found."
                 )
             if calib_param.endswith(".npy"):
-                calib_param: np.ndarray = np.load(calib_param)
+                calib_param = np.load(calib_param)
+            elif calib_param.endswith(".npz"):
+                with np.load(calib_param) as calibration:
+                    if "image_trans_calib" not in calibration:
+                        raise ValueError(
+                            "Calibration archive must contain 'image_trans_calib': "
+                            f"{calib_param}"
+                        )
+                    calib_param = calibration["image_trans_calib"].copy()
             else:
                 raise ValueError(
                     f"Unsupported calibration parameter file format: {calib_param}"

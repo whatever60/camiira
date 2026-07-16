@@ -20,20 +20,18 @@ from .utils import read_config, read_file_list, add_contours
 from .detector import CAMIIColonyDetector
 
 
-DATA_DIR = f"{os.path.dirname(__file__)}/test_data"
-
-
 def detect_colony_batch(
     input_dir: str,
     output_dir: str | None = None,
-    calib_param: str
-    | dict[str, np.ndarray] = f"{DATA_DIR}/parameters/calib_parameter.npz",
-    config_path: str = f"{DATA_DIR}/configs/configure.yaml",
-    time_label: str = "max",
+    calib_param: str | dict[str, np.ndarray] | None = None,
+    config_path: str | None = None,
+    time_label: str | int = "max",
     toss_red: bool = False,
 ) -> list[tuple[pl.DataFrame, list[np.ndarray]]]:
+    if config_path is None:
+        raise ValueError("config_path is required for batch colony detection.")
     image_label_list, image_trans_list, image_epi_list = read_file_list(
-        input_dir, int(time_label) if time_label.isdigit() else time_label
+        input_dir, time_label
     )
     config = read_config(config_path)
     if output_dir is not None:
@@ -99,12 +97,12 @@ def detect_colony_single(
     input_path: str,
     output_dir: str,
     calib_param: str | None = None,
-    config_path: str = f"{DATA_DIR}/configs/configure.yaml",
+    config_path: str | None = None,
 ) -> None:
-    """Colony detection for a single image follows the same logic as batch detection,
-    except that correction is skipped.
-    """
+    """Detect colonies in one image without requiring a paired white-light image."""
     # read config, image label, and the image itself.
+    if config_path is None:
+        raise ValueError("config_path is required for single-image colony detection.")
     config = read_config(config_path)
     # config["calib_contrast_trans_alpha"] = 1
     # config["calib_contrast_trans_beta"] = 255
@@ -884,10 +882,15 @@ def main():
 
     parser.add_argument(
         "-i",
+        "--input",
         "--input_path",
+        dest="input_path",
         type=str,
         required=True,
-        help="Path to the directory containing input images.",
+        help=(
+            "Either a PNG image, or a transformed-image directory containing "
+            "red_rgb and white_rgb subdirectories."
+        ),
     )
     parser.add_argument(
         "-o",
@@ -900,18 +903,31 @@ def main():
         "-b",
         "--calib_param_path",
         type=str,
-        default=f"{DATA_DIR}/parameters/calib_parameter.npz",
-        help="Path to the calibration parameter file.",
+        default=None,
+        help=(
+            "Optional path to a calibration .npz file. If omitted, batch detection "
+            "uses unity calibration and single-image detection skips calibration."
+        ),
     )
     parser.add_argument(
         "-c",
         "--config_path",
         type=str,
-        default=f"{DATA_DIR}/configs/configure.yaml",
         required=True,
         help="Path to the configuration file.",
     )
-    parser.add_argument("-t", "--time_label", default="max", type=str)
+    parser.add_argument(
+        "-t",
+        "--time_label",
+        default="max",
+        type=str,
+        help=(
+            "Image time selector. Unsuffixed images have internal time point -1, so "
+            "'min' selects them when present; 'max' (the default) selects the latest "
+            "available image. Use -1 or a non-negative integer for an exact time. "
+            "'default' retains the original unsuffixed-else-latest behavior."
+        ),
+    )
     parser.add_argument("--toss_red", action="store_true", help="Toss the red channel.")
 
     args = parser.parse_args()
@@ -928,7 +944,7 @@ def main():
         detect_colony_single(
             args.input_path,
             args.output_dir,
-            calib_param=None,
+            calib_param=args.calib_param_path,
             config_path=args.config_path,
         )
     else:
