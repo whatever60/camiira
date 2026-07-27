@@ -50,6 +50,7 @@ import seaborn as sns
 from rich import print as rprint
 from tqdm.auto import tqdm, trange
 
+from ._selection import choose_replacement_rows
 from .utils import read_config, add_contours, _coco_to_contours, read_file_list
 
 
@@ -744,7 +745,7 @@ def pick_colony_post(
                 dict_border["annotations"].extend(annots_new)
 
                 # update df_contour
-                from detect_colonies import _calc_contours_stats
+                from .detect_colonies import _calc_contours_stats
 
                 cnts_post = _coco_to_contours(dict_border_post)
                 cnts_new = [c for i, c in zip(intersect, cnts_post) if not i]
@@ -793,33 +794,40 @@ def pick_colony_post(
         data_source = np.nan_to_num(df_source[["pca1", "pca2"]].to_numpy(), 0)
         data_target = np.nan_to_num(df_target[["pca1", "pca2"]].to_numpy(), 0)
         picking_status = df_contour["picking_status"].to_numpy().copy()
-        dist, _ = KDTree(data_source).query(data_target)
         num_to_pick = num_colonies - df_source.shape[0]
-        if num_to_pick > 0 and num_to_pick <= len(df_target):
+        if num_to_pick > 0 and len(df_target) > 0:
             rprint(
                 "\tDoing a quick picking of",
                 num_to_pick,
                 "colonies among",
                 len(df_target),
-                "unpicked ones to compensate for colonies manully removed.",
+                "unpicked ones to compensate for colonies manually removed.",
             )
-            # index_to_modify = np.where(picking_status == 2)[0][
-            #     np.argpartition(dist, -num_to_pick)[-num_to_pick:]
-            # ]
-            cnt_barcodes = df_target["barcode"].to_list()
-            num_picked_barcodes = dict(zip(*df_source["barcode"].value_counts()))
-            plate2num_cnts = {
-                b: i if i > 0 else np.inf for b, i in zip(barcodes, num_colonies_plate)
-            }
-            index_to_modify = []
-            for idx in np.argsort(dist)[::-1]:
-                b = cnt_barcodes[idx]
-                if num_picked_barcodes[b] < plate2num_cnts[b]:
-                    index_to_modify.append(idx)
-                    num_to_pick -= 1
-                if num_to_pick == 0:
-                    break
-            picking_status[index_to_modify] = 1
+            if len(df_source) > 0:
+                dist, _ = KDTree(data_source).query(data_target)
+                candidate_order = np.argsort(dist)[::-1]
+            else:
+                warnings.warn(
+                    "No picked colonies remain after manual inspection; "
+                    "replacement colonies will be selected in input order."
+                )
+                candidate_order = np.arange(len(df_target))
+
+            replacement_rows = choose_replacement_rows(
+                candidate_order,
+                df_target["contour_idx_group"].to_list(),
+                df_target["barcode"].to_list(),
+                df_source["barcode"].to_list(),
+                dict(zip(barcodes, num_colonies_plate)),
+                num_to_pick,
+            )
+            picking_status[replacement_rows] = 1
+            if len(replacement_rows) < num_to_pick:
+                warnings.warn(
+                    f"Only {len(replacement_rows)} of {num_to_pick} requested "
+                    "replacement colonies could be selected because too few eligible "
+                    "unpicked colonies remain."
+                )
         elif num_to_pick <= 0:
             rprint(
                 "\tNo less colonies are marked as picked after manual picking (",
@@ -836,11 +844,10 @@ def pick_colony_post(
                 "\tNo colonies are marked as unpicked after manual picking. "
                 "Class of all colonies will remain as is."
             )
-        else:
-            import pdb
-
-            pdb.set_trace()
-            rprint("Some other cases.")
+            warnings.warn(
+                f"No replacement colonies could be selected for the {num_to_pick} "
+                "open pick slots."
+            )
 
         df_contour = df_contour.with_columns(picking_status=pl.Series(picking_status))
 

@@ -7,11 +7,11 @@ Future plans include:
 
 ## Installation
 
-The program runs on Python 3.10+. Install the v0.2.0 release directly from its
+The program runs on Python 3.10+. Install the v0.3.0 release directly from its
 versioned Git tag:
 
 ```bash
-pip install "camiira @ git+https://github.com/whatever60/camiira.git@v0.2.0"
+pip install "camiira @ git+https://github.com/whatever60/camiira.git@v0.3.0"
 ```
 
 To work on the current source checkout instead:
@@ -34,9 +34,9 @@ not install the exact versions recorded in `uv.lock`.
 
 ## Try it in Google Colab
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/whatever60/camiira/blob/v0.2.0/examples/camiira_v0.2.0_colab.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/whatever60/camiira/blob/v0.3.0/examples/camiira_v0.3.0_colab.ipynb)
 
-The Colab tutorial installs CAMIIRA v0.2.0, downloads a versioned public example
+The Colab tutorial installs CAMIIRA v0.3.0, downloads a versioned public example
 dataset from S3, runs BMP transformation, calibration, and colony detection, and
 checks the generated contour images, metadata CSV files, and COCO JSON annotations.
 The older notebooks in `examples/` remain available for their original specialized
@@ -45,7 +45,7 @@ workflows.
 ### Dependencies
 
 The package includes the following main dependencies:
-- NumPy, SciPy, pandas, Polars, scikit-learn, scikit-image, scikit-bio, biom-format, Matplotlib, seaborn
+- NumPy, SciPy, pandas, Polars, PyArrow, scikit-learn, scikit-image, scikit-bio, biom-format, Matplotlib, seaborn
 - opencv-python, Pillow
 - python-tsp
 - PyYAML, tqdm, rich
@@ -61,8 +61,6 @@ After installation, the following CLI commands are available:
 - `calc_calib_params.py` - Calculate calibration parameters  
 - `correct_coords.py` - Coordinate correction for picking
 - `data_transform.py` - Data transformation utilities
-- `draw_interaction.py` - Draw interaction networks
-- `isolate_interaction.py` - Isolate interaction inference
 - `select_colonies.py` - Colony selection pipeline
 
 ## Pipeline description
@@ -106,7 +104,7 @@ Prepare a csv file with these columns for each plate (order does not matter and 
 - `barcode`: Plate barcode.
 - `pick_group`: "Picking group" that the plate belongs to. During colony selection steps (see below), optimized picking is performed once for each group.
 - `num_picks_group`: Number of colonies to pick from each group.
-- `num_picks_plate`: The maximum number of colonies selected from individual plates. This is a constraint for picking optimization and useful when we want to make balance picking across plates. -1 indicates no limit.
+- `max_picks_plate`: The maximum number of colonies selected from individual plates. This is a constraint for picking optimization and useful when we want to make balance picking across plates. -1 indicates no limit.
 
 #### Config file
 
@@ -147,7 +145,7 @@ Microbial colonies are detected by the canonical pipeline of image processing: b
 
 ```bash
 detect_colonies.py \
-    --input_path <input_dir_with_the_4_subdirectories> \
+    --input_path <directory_with_red_rgb_and_white_rgb_subdirectories> \
     --output_dir <output_dir> \
     --calib_param_path <calibration_parameter_npz> \
     --config_path <config_file>
@@ -183,7 +181,7 @@ generates `<barcode>_rgb_white_contour.jpg`.
 
 ### Step 2: Colony selection (initial stage)
 
-A subset of all detected colonies will be selected for picking, under constraint set in the plate metadata. We start by selecting `num_picks_group` colonies (in the metadata) from each group using farthest point algorithm. This algorithm randomly chooses `num_picks_group` colonies and iteratively refines this set until convergence by replacing a colony in the current set by a colony that is farthest away from the current set. When doing replacement, the number of colonies selected for each plate is recorded to not exceed the `num_picks_plate` (in the metadata) limit for each plate.
+A subset of all detected colonies will be selected for picking, under constraint set in the plate metadata. We start by selecting `num_picks_group` colonies (in the metadata) from each group using farthest point algorithm. This algorithm randomly chooses `num_picks_group` colonies and iteratively refines this set until convergence by replacing a colony in the current set by a colony that is farthest away from the current set. When doing replacement, the number of colonies selected for each plate is recorded to not exceed the `max_picks_plate` (in the metadata) limit for each plate.
 
 ```bash
 select_colonies.py init \
@@ -197,7 +195,8 @@ select_colonies.py init \
 In the output directory, these outputs will be generated for each plate:
 - `<barcode>_annot_init.json`, colony segmentation (after initial selection) in coco format.
 - `<barcode>_metadata_init.csv`, metadata for each selected contour (i.e., putative colony).
-- `<barcode>_gray_contour_init.jpg`, segmentation contours (after initial selection) overlaid on the red light image in grayscale.
+- `<barcode>_rgb_red_contour_init.png`, segmentation contours overlaid on the red-light image.
+- `<barcode>_rgb_white_contour_init.png`, segmentation contours overlaid on the white-light image.
 
 ### Step 3: Manual inspection
 
@@ -231,15 +230,19 @@ After a few colonies are labeled as bad colonies, the constraints set in the met
 ```bash
 select_colonies.py post \
     --image_dir <directory_with_png_images> \
-    --input_dir <input_dir> \
+    --input_dir <output_dir_from_init> \
     --metadata_path <path_to_metadata> \
     --start_from init
 ```
 
-In the output directory, these outputs will be generated for each plate:
+`--input_dir` is the same directory produced by `init`. It must contain each
+`*_metadata_init.csv`, `*_annot_init.json`, and manually reviewed
+`*_annot_init_post.json`; `post` writes the following files back into that directory:
+
 - `<barcode>_annot_final.json`, colony segmentation (after post selection) in coco format.
 - `<barcode>_metadata_final.csv`, metadata for each selected contour (i.e., putative colony).
-- `<barcode>_gray_contour_final.jpg`, segmentation contours (after post selection) overlaid on the red light image in grayscale.
+- `<barcode>_rgb_red_contour_final.png`, segmentation contours overlaid on the red-light image.
+- `<barcode>_rgb_white_contour_final.png`, segmentation contours overlaid on the white-light image.
 
 ### Step 5: Go back and forth
 
@@ -259,9 +262,10 @@ select_colonies.py final \
 ```
 
 In the output directory, these outputs will be generated for each plate:
-- `<barcode>_gray_contour.jpg`, segmentation contours overlaid on the red light image in grayscale.
+- `<barcode>_gs_red_contour.jpg`, segmentation contours overlaid on the red-light image in grayscale.
+- `<barcode>_gs_white_contour.jpg`, segmentation contours overlaid on the white-light image in grayscale.
 - `<barcode>_metadata.csv`, metadata for each selected contour (i.e., putative colony).
-- `<barcode>_picking.json`, picking coordinates of selected colonies in CSV format, first column is x coordinate and second column is y coordinate.
+- `<barcode>_picking.csv`, picking coordinates of selected colonies in CSV format, first column is x coordinate and second column is y coordinate.
 - `<barcode>_rgb_red_contour.jpg`, segmentation contours overlaid on the red light image.
 - `<barcode>_rgb_white_contour.jpg`, segmentation contours overlaid on the white light image.
 
@@ -271,8 +275,18 @@ Just note that exact TSP optimization might take forever if you have hundreds of
 
 ```bash
 correct_coords.py \
-    -i <input_dir_with_picking_json_from_last_step> \
+    -i <input_dir_with_picking_csv_from_last_step> \
     -p <correction_parameter_json>
 ```
 
-In the directory, we do correction for coordinates in all `*_picking.json` files and store corrected coordinates as `<barcode>_Coordinates.csv`, named like this because of the requirement by the colony picking robot.
+In the directory, we do correction for coordinates in all `*_picking.csv` files and store corrected coordinates as `<barcode>_Coordinates.csv`, named like this because of the requirement by the colony picking robot.
+
+## Miscellaneous
+
+### `isolate_interaction.py`
+
+Optional downstream inference of interactions among picked isolates.
+
+### `draw_interaction.py`
+
+Optional visualization of interaction-inference results.

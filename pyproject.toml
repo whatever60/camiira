@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "camiira"
-version = "0.2.0"
+version = "0.3.0"
 description = "The CAMII readout analysis framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,6 +19,7 @@ dependencies = [
     "matplotlib>=3.8.3",
     "rich>=13.6.0",
     "polars>=1.1.0",
+    "pyarrow>=16.1.0",
     "tqdm>=4.66.1",
     "scipy>=1.13.0",
     "scikit-image>=0.23.2",
