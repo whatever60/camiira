@@ -5,6 +5,16 @@ Future plans include:
 - Image-to-taxonomy models (ongoing),
 - End-to-end segmentation and classification.
 
+## Try it in Google Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/whatever60/camiira/blob/v0.3.0/examples/camiira_v0.3.0_colab.ipynb)
+
+The Colab tutorial installs CAMIIRA v0.3.0, downloads a versioned public example
+dataset from S3, runs BMP transformation, calibration, and colony detection, and
+checks the generated contour images, metadata CSV files, and COCO JSON annotations.
+The older notebooks in `examples/` remain available for their original specialized
+workflows.
+
 ## Installation
 
 The program runs on Python 3.10+. Install the v0.3.0 release directly from its
@@ -32,26 +42,21 @@ source .venv/bin/activate
 `pip install -e .` follows the compatible version ranges in `pyproject.toml`; it does
 not install the exact versions recorded in `uv.lock`.
 
-## Try it in Google Colab
+## Contents
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/whatever60/camiira/blob/v0.3.0/examples/camiira_v0.3.0_colab.ipynb)
-
-The Colab tutorial installs CAMIIRA v0.3.0, downloads a versioned public example
-dataset from S3, runs BMP transformation, calibration, and colony detection, and
-checks the generated contour images, metadata CSV files, and COCO JSON annotations.
-The older notebooks in `examples/` remain available for their original specialized
-workflows.
-
-### Dependencies
-
-The package includes the following main dependencies:
-- NumPy, SciPy, pandas, Polars, PyArrow, scikit-learn, scikit-image, scikit-bio, biom-format, Matplotlib, seaborn
-- opencv-python, Pillow
-- python-tsp
-- PyYAML, tqdm, rich
-- torch, networkx
-
-All dependencies are automatically installed when installing the package.
+- [Try it in Google Colab](#try-it-in-google-colab)
+- [Installation](#installation)
+- [Command line interface](#command-line-interface)
+- [Pipeline](#pipeline-description)
+  - [Prepare data](#step-0-prepare-your-data)
+  - [Detect colonies](#step-1-colony-detection)
+  - [Initial selection](#step-2-colony-selection-initial-stage)
+  - [Manual inspection](#step-3-manual-inspection)
+  - [Post selection](#step-4-colony-selection-post-stage)
+  - [Iterative review](#step-5-go-back-and-forth)
+  - [Finalize selection](#step-6-finalize-colony-selection)
+  - [Correct coordinates](#step-7-final-step-well-done-coordinate-correction)
+- [Miscellaneous](#miscellaneous)
 
 ## Command Line Interface
 
