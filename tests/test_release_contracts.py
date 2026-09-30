@@ -59,7 +59,7 @@ class ReleaseContractTests(unittest.TestCase):
     def test_release_version_and_pyarrow_dependency(self):
         project = (REPO_ROOT / "pyproject.toml").read_text()
 
-        self.assertRegex(project, r'(?m)^version = "0\.3\.0"$')
+        self.assertRegex(project, r'(?m)^version = "0\.4\.0"$')
         self.assertRegex(project, r'(?m)^\s*"pyarrow[><=]')
 
     def test_small_rgb_config_includes_calibration_settings(self):

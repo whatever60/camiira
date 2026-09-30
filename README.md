@@ -76,7 +76,24 @@ Prepare input data. Images and metadata are necessary, and default calibration p
 
 #### Images
 
-In the current setup, the camera in our robot system takes images of rectangular culture plates under two light conditions:
+For one high-resolution BHI image from a robot camera, the BMP can be processed
+directly; conversion and a paired image are not required:
+
+```bash
+detect_colonies.py \
+    --input_path <4033x2693_bhi_image.bmp> \
+    --output_dir <output_dir> \
+    --config_path test_data/configs/configure_single_bmp_bhi.yaml
+```
+
+This profile is tuned for 4033 x 2693 images and crops to that camera's agar surface.
+Blood agar needs its own illumination and validation: strong gradients in a single
+image can make colony calls unreliable even when the command completes.
+As elsewhere in the pipeline, the substring before the first `_` is the plate barcode;
+use that same value in the metadata table.
+
+For the paired-image workflow, the camera in our robot system takes images of
+rectangular culture plates under two light conditions:
 - Red light from bottom and
 - White light along the upper edge of the plate. Images are output in `.bmp` format. Put these image pairs in one directory.
 
@@ -174,8 +191,8 @@ For RGB camera images, `test_data/configs/configure_small.yaml` is the configura
 used by the demo workflow. Files ending in `_hsi.yaml` are intended for hyperspectral
 PCA images, not the RGB camera input.
 
-When input path is a `.png` image, colony detection is performed for that image without
-requiring the four-subdirectory layout. These outputs are generated:
+When input path is a single BMP or PNG image, colony detection is performed without
+requiring the subdirectory layout. These outputs are generated:
 - `<barcode>_annot.json`, colony segmentation in coco format.
 - `<barcode>_gs_red_contour.jpg`, segmentation contours overlaid on the grayscale image under red light.
 - `<barcode>_metadata.csv`, metadata for each contour (i.e., putative colony).

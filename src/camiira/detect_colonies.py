@@ -20,6 +20,31 @@ from .utils import read_config, read_file_list, add_contours
 from .detector import CAMIIColonyDetector
 
 
+def _single_detector_options(config: dict) -> dict:
+    """Translate a pipeline config into single-image detector options.
+
+    Older RGB configs predate :class:`CAMIIColonyDetector` and therefore do not
+    contain every detector-specific key.  Keep those configs usable for a single
+    image by applying the detector's established defaults.
+    """
+    return {
+        "bg_gaussian_kernel": config.get("bg_gaussian_kernel", 18),
+        "bg_threshold_block_size": config["bg_threshold_block_size"],
+        "bg_threshold_offset": config["bg_threshold_offset"],
+        "fg_gaussian_kernel": config.get("fg_gaussian_kernel", 5),
+        "canny_upper_percentile": config["canny_upper_percentile"],
+        "clahe_clip_limit": config.get("clahe_clip_limit", 2.0),
+        "clahe_tile_grid_size": config.get("clahe_tile_grid_size", [4, 4]),
+        "calib_contrast_alpha": config.get("calib_contrast_alpha", 1),
+        "calib_contrast_beta": config.get("calib_contrast_beta", 0),
+        "crop_x_min": config["crop_x_min"],
+        "crop_x_max": config["crop_x_max"],
+        "crop_y_min": config["crop_y_min"],
+        "crop_y_max": config["crop_y_max"],
+        "skip_clahe": config.get("skip_clahe", False),
+    }
+
+
 def detect_colony_batch(
     input_dir: str,
     output_dir: str | None = None,
@@ -113,6 +138,8 @@ def detect_colony_single(
     image_label = os.path.basename(input_path).split(".")[0].split("_")[0]
     rprint("Detecting colonies for", image_label)
     image = cv.imread(input_path)
+    if image is None:
+        raise ValueError(f"Could not read image: {input_path}")
     # image_trans_raw_cropped = image_trans_raw[
     #     image_trans_raw.shape[0] // 10 : 9 * image_trans_raw.shape[0] // 10,
     #     image_trans_raw.shape[1] // 10 : 9 * image_trans_raw.shape[1] // 10,
@@ -134,20 +161,8 @@ def detect_colony_single(
     #     + config["calib_contrast_trans_beta"]
     # )
     detector = CAMIIColonyDetector(
-        bg_gaussian_kernel=config["bg_gaussian_kernel"],
-        bg_threshold_block_size=config["bg_threshold_block_size"],
-        bg_threshold_offset=config["bg_threshold_offset"],
-        fg_gaussian_kernel=config["fg_gaussian_kernel"],
-        canny_upper_percentile=config["canny_upper_percentile"],
-        clahe_clip_limit=config["clahe_clip_limit"],
-        clahe_tile_grid_size=config["clahe_tile_grid_size"],
         calib_param=calib_param,
-        calib_contrast_alpha=config["calib_contrast_alpha"],
-        calib_contrast_beta=config["calib_contrast_beta"],
-        crop_x_min=config["crop_x_min"],
-        crop_x_max=config["crop_x_max"],
-        crop_y_min=config["crop_y_min"],
-        crop_y_max=config["crop_y_max"],
+        **_single_detector_options(config),
     )
     contours = detector.detect(image)
 
@@ -157,9 +172,10 @@ def detect_colony_single(
 
     contours, df = colony_qc(detector.image_corrected_gs, contours, config)
     df = _modify_output_object_colony_detection(df, image_label, config)
-    contours = [
-        cnt + np.array([config["crop_x_min"], config["crop_y_min"]]) for cnt in contours
-    ]
+    crop_offset = np.array(
+        [config["crop_x_min"] or 0, config["crop_y_min"] or 0]
+    )
+    contours = [cnt + crop_offset for cnt in contours]
 
     image_trans_pin = add_contours(
         image,
@@ -493,8 +509,8 @@ def _modify_output_object_colony_detection(
     df: pl.DataFrame, barcode: str, config: dict
 ) -> pl.DataFrame:
     return df.with_columns(
-        center_x=pl.col("center_x") + config["crop_x_min"],
-        center_y=pl.col("center_y") + config["crop_y_min"],
+        center_x=pl.col("center_x") + (config["crop_x_min"] or 0),
+        center_y=pl.col("center_y") + (config["crop_y_min"] or 0),
         plate_barcode=pl.lit(barcode),
     ).with_row_index("colony_index")
 
@@ -888,8 +904,9 @@ def main():
         type=str,
         required=True,
         help=(
-            "Either a PNG image, or a transformed-image directory containing "
-            "red_rgb and white_rgb subdirectories."
+            "Either one image readable by OpenCV (for example BMP or PNG), or a "
+            "transformed-image directory containing red_rgb and white_rgb "
+            "subdirectories."
         ),
     )
     parser.add_argument(
