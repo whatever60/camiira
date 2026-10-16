@@ -161,12 +161,12 @@ class CAMIIColonyDetector:
         )
 
         # Step 4: Canny Edge Detection
-        try:
-            threshold2 = np.percentile(
-                arr_res_bg.flatten(), self.canny_upper_percentile
-            )
-        except IndexError:
-            threshold2 = 0
+        # Match CAMII's nonzero population without random sampling.
+        foreground = arr_res_bg[arr_res_bg != 0]
+        threshold2 = (
+            np.percentile(foreground, self.canny_upper_percentile)
+            if foreground.size else 0
+        )
 
         edges = cv.Canny(
             image=arr_res_bg.astype(np.uint8), threshold1=1, threshold2=threshold2

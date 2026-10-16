@@ -30,6 +30,8 @@ import os
 from itertools import cycle
 import json
 import warnings
+import shutil
+from pathlib import Path
 
 import numpy as np
 import numba
@@ -51,7 +53,42 @@ from rich import print as rprint
 from tqdm.auto import tqdm, trange
 
 from ._selection import choose_replacement_rows
-from .utils import read_config, add_contours, _coco_to_contours, read_file_list
+from .utils import read_config, add_contours, _coco_to_contours, read_file_list, read_plate_inputs
+
+
+def _selection_inputs(image_dir, data_dir, output_dir=None, time_label="default"):
+    manifest = Path(data_dir) / "inputs.json"
+    if manifest.exists():
+        plates = read_plate_inputs(data_dir, image_dir)
+        if output_dir is not None and Path(output_dir).resolve() != Path(data_dir).resolve():
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(manifest, Path(output_dir) / manifest.name)
+        return plates
+    # Historical results have no manifest and retain their paired-directory reader.
+    labels, red, white = read_file_list(image_dir, time_label)
+    return {b: {"trans_path": r, "epi_path": w} for b, r, w in zip(labels, red, white)}
+
+
+def _render_plate(images, output_dir, barcode, contours, df, stage=None):
+    centers = df[["center_x", "center_y"]].to_numpy()
+    status = df["picking_status"].to_list()
+    suffix = f"_{stage}.png" if stage else ".jpg"
+    for light, key in (("red", "trans_path"), ("white", "epi_path")):
+        if images[key] is None:
+            continue
+        path = Path(images[key])
+        image = cv.imread(str(path))
+        if image is None:
+            raise ValueError(f"Could not read image: {path}")
+        views = {"rgb": image}
+        if stage is None:
+            gray_path = path.parent.parent / f"{light}_grayscale" / path.name
+            views["gs"] = (cv.imread(str(gray_path))
+                           if path.parent.name == f"{light}_rgb" and gray_path.is_file()
+                           else cv.cvtColor(cv.cvtColor(image, cv.COLOR_BGR2GRAY), cv.COLOR_GRAY2BGR))
+        for kind, view in views.items():
+            overlay = _add_contours(view, contours, status, centers)
+            cv.imwrite(os.path.join(output_dir, f"{barcode}_{kind}_{light}_contour{suffix}"), overlay)
 
 
 def colony_feat_pca(df_contour: pl.DataFrame) -> pl.DataFrame:
@@ -462,6 +499,7 @@ def pick_colony_init(
     _seed: int = 42,
 ) -> None:
     config = read_config(config_path)
+    inputs = _selection_inputs(image_dir, input_dir, output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     for group, (barcodes, num_colonies_plate, num_colonies) in process_metadata(
@@ -554,7 +592,7 @@ def pick_colony_init(
             barcodes, dfs_contour, dicts_border
         ):
             _save_modified(
-                image_dir,
+                inputs[barcode],
                 output_dir,
                 df_contour,
                 dict_border,
@@ -564,31 +602,22 @@ def pick_colony_init(
 
 
 def _save_modified(
-    image_dir: str,
+    images: dict,
     output_dir: str,
     df_contour: pl.DataFrame,
     dict_border: dict,  # in coco format
     barcode: str,
     annot_stage: str,
-    time_label="default",
 ) -> None:
     """These files will be saved to `output_dir`:
     - `<barcode>_annot_[init|final].json`: coco format segmentation annotation
     - `<barcode>_metadata_[init|final].csv`: metadata with picking status
-    - `<barcode>_rgb_red_contour_[init|final].png`: RGB image under red light with
-        colony segmentation. Selected colonies highlighted.
-    - `<barcode>_rgb_white_contour_[init|final].png`: same as above for white light.
+    - `<barcode>_rgb_[red|white]_contour_[init|final].png`: overlays for available
+        input images, with selected colonies highlighted.
 
     The order of colonies in the annotation file and metadata file will first base on
     colony class and then by colony size.
     """
-    image_label_list, image_trans_list, image_epi_list = read_file_list(
-        image_dir, int(time_label) if time_label.isdigit() else time_label
-    )
-    barcode2imgs = {
-        i: {"red": r, "white": w}
-        for i, r, w in zip(image_label_list, image_trans_list, image_epi_list)
-    }
     picking_status = df_contour["picking_status"].to_list()
     for idx, ps in enumerate(picking_status):
         dict_border["annotations"][idx]["category_id"] = ps
@@ -616,19 +645,7 @@ def _save_modified(
     df_contour.write_csv(
         os.path.join(output_dir, f"{barcode}_metadata_{annot_stage}.csv")
     )
-    for light in ["red", "white"]:
-        image_contours = _add_contours(
-            cv.imread(barcode2imgs[barcode][light]),
-            _coco_to_contours(dict_border),
-            df_contour["picking_status"].to_list(),
-            df_contour[["center_x", "center_y"]].to_numpy(),
-        )
-        cv.imwrite(
-            os.path.join(
-                output_dir, f"{barcode}_rgb_{light}_contour_{annot_stage}.png"
-            ),
-            image_contours,
-        )
+    _render_plate(images, output_dir, barcode, _coco_to_contours(dict_border), df_contour, annot_stage)
 
 
 def _add_contours(
@@ -684,10 +701,7 @@ def pick_colony_post(
     colonies that are not removed.
     """
     assert start_from in ["init", "final"]
-    image_label_list, image_trans_list, _ = read_file_list(
-        image_dir, int(time_label) if time_label.isdigit() else time_label
-    )
-    barcode2img_trans = dict(zip(image_label_list, image_trans_list))
+    inputs = _selection_inputs(image_dir, data_dir, time_label=time_label)
     for group, (barcodes, num_colonies_plate, num_colonies) in process_metadata(
         metadata_path
     ).items():
@@ -749,7 +763,7 @@ def pick_colony_post(
 
                 cnts_post = _coco_to_contours(dict_border_post)
                 cnts_new = [c for i, c in zip(intersect, cnts_post) if not i]
-                img = cv.imread(barcode2img_trans[b])
+                img = cv.imread(inputs[b]["trans_path"] or inputs[b]["epi_path"])
                 rng = np.random.default_rng(_seed)
                 mock_image = rng.random(img.shape[:2])
                 # get stats and set a few features to null
@@ -864,7 +878,7 @@ def pick_colony_post(
             barcodes, dfs_contour_dict, dicts_border
         ):
             _save_modified(
-                image_dir,
+                inputs[barcode],
                 data_dir,
                 df_contour,
                 dict_border,
@@ -885,17 +899,14 @@ def pick_colony_final(
     """When the user is satisfied and no colonies need to be removed, we can reorder
     selected colonies to minimize movement (i.e., TSP problem) and save results
     includeing:
-        - Two RGB image with colony segmentation. Selected colonies highlighted.
+        - Available RGB and grayscale images with selected colonies highlighted.
         - A two column csv file where each row is xy coordinate of the centers of
             selected colonies, ordered by picking order.
         - A plot of two dimensional colony feature from PCA, with colored mapping to
             origin plate and shape to whether the colony is picked, not picked, or
             manually excluded.
     """
-    image_label_list, image_trans_list, _ = read_file_list(
-        image_dir, int(time_label) if time_label.isdigit() else time_label
-    )
-    barcode2img_trans = {i: t for i, t in zip(image_label_list, image_trans_list)}
+    inputs = _selection_inputs(image_dir, data_dir, output_dir, time_label)
     os.makedirs(output_dir, exist_ok=True)
     for group, (barcodes, num_colonies_plate, num_colonies) in tqdm(
         process_metadata(metadata_path).items()
@@ -919,15 +930,6 @@ def pick_colony_final(
         ]
 
         for b, df_contour in zip(tqdm(barcodes, leave=False), dfs_contour):
-            file_name = os.path.basename(barcode2img_trans[b])
-            image_rgb_red = cv.imread(os.path.join(image_dir, "red_rgb", file_name))
-            image_rgb_white = cv.imread(os.path.join(image_dir, "white_rgb", file_name))
-            image_gs_red = cv.imread(
-                os.path.join(image_dir, "red_grayscale", file_name)
-            )
-            image_gs_white = cv.imread(
-                os.path.join(image_dir, "white_grayscale", file_name)
-            )
             centers = df_contour[["center_x", "center_y"]].to_numpy()
             ps = df_contour["picking_status"].to_numpy()
             with open(os.path.join(data_dir, f"{b}_annot_final.json")) as f:
@@ -948,31 +950,7 @@ def pick_colony_final(
             else:
                 df_contour = df_contour.with_columns(picking_order=-1)
 
-            # images with contours
-            image_rgb_red_contours = _add_contours(image_rgb_red, contours, ps, centers)
-            image_rgb_white_contours = _add_contours(
-                image_rgb_white, contours, ps, centers
-            )
-            image_gs_red_contours = _add_contours(image_gs_red, contours, ps, centers)
-            image_gs_white_contours = _add_contours(
-                image_gs_white, contours, ps, centers
-            )
-            cv.imwrite(
-                os.path.join(output_dir, f"{b}_rgb_red_contour.jpg"),
-                image_rgb_red_contours,
-            )
-            cv.imwrite(
-                os.path.join(output_dir, f"{b}_rgb_white_contour.jpg"),
-                image_rgb_white_contours,
-            )
-            cv.imwrite(
-                os.path.join(output_dir, f"{b}_gs_red_contour.jpg"),
-                image_gs_red_contours,
-            )
-            cv.imwrite(
-                os.path.join(output_dir, f"{b}_gs_white_contour.jpg"),
-                image_gs_white_contours,
-            )
+            _render_plate(inputs[b], output_dir, b, contours, df_contour)
 
             # metadata
             df_contour.write_csv(os.path.join(output_dir, f"{b}_metadata.csv"))
@@ -1007,6 +985,7 @@ def pick_colony_final(
         )
         ax.set_title(f"PCA of colony features in group {group}")
         fig.savefig(os.path.join(output_dir, f"pca_{group}.png"), dpi=300)
+        plt.close(fig)
 
 
 def _tsp(

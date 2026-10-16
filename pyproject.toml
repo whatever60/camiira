@@ -36,6 +36,16 @@ dependencies = [
     "biom-format>=2.1.15",
 ]
 
+[project.urls]
+Repository = "https://github.com/whatever60/camiira"
+Issues = "https://github.com/whatever60/camiira/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/camiira/configs" = ["test_data/configs/*.yaml"]
+
 [project.scripts]
 "detect_colonies.py" = "camiira.cli:detect_colonies"
 "calc_calib_params.py" = "camiira.cli:calc_calib_params"

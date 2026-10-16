@@ -1,0 +1,50 @@
+# Blood-agar BMP, lights off, 4033 x 2693 robot-camera image.
+# Shared blood-agar profile; only gain sign and threshold offset differ.
+# beta=168 keeps both provided plates' corrected grayscale within 0..255.
+calib_contrast_alpha: 1
+calib_contrast_beta: 168
+crop_y_min: 220
+crop_y_max: 2450
+crop_x_min: 220
+crop_x_max: 3820
+fg_gaussian_kernel: 11
+# Existing 3x3 filter, configured as a normalized box filter.
+bg_gaussian_kernel: -1
+bg_threshold_block_size: 301
+bg_threshold_offset: 20
+skip_clahe: false
+clahe_clip_limit: 2
+clahe_tile_grid_size: [4, 4]
+# Percentile of all nonzero blurred foreground pixels.
+canny_upper_percentile: 99
+postprocess: true
+
+min_size: 15
+max_size: 5000
+min_circularity: 0.1
+max_circularity: 1
+small_size_area: 20
+small_size_circularity: 0.1
+min_convexity: 0.1
+max_convexity: 1
+min_inertia: 0.05
+max_inertia: 1
+min_dist: 0
+min_dist_pin: 0
+circularity_threshold: 0.5
+circularity_threshold_very_bad: 0.1
+
+area_segment_min: 30
+area_segment_max: 50000
+segment_bias: 10
+filter_bias: 20
+size_sub_sample: 10000
+post_min_size: 15
+post_min_circularity: 0.1
+post_min_convexity: 0.1
+post_min_inertia: 0.5
+random_walker_beta: 2000
+random_walker_method: bf
+random_walker_maxi_size: 17
+farthest_points_iteration: 10
+plate_qc_colony_contour_pixel: 2

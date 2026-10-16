@@ -5,11 +5,26 @@ from os import path as op
 from collections import defaultdict
 import yaml
 import glob
+import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import cv2 as cv
 import biom
+
+IMAGE_EXTENSIONS = (".bmp", ".png", ".jpg", ".jpeg", ".tif", ".tiff")
+
+
+def _parse_image_name(image):
+    match = re.fullmatch(
+        r"([^_]+)(?:_(d\d+|\d{14}|\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}))?",
+        Path(image).stem,
+    )
+    if match is None:
+        raise ValueError
+    barcode, time = match.groups()
+    return barcode, int(time.removeprefix("d").replace("-", "").replace("_", "")) if time else -1
 
 
 def read_config(config_path: str):
@@ -55,7 +70,7 @@ def read_config(config_path: str):
     return ret
 
 
-def parse_dir_for_time_series(input_dir, ext: str = "png") -> dict[str, dict[int, str]]:
+def parse_dir_for_time_series(input_dir, ext: str | tuple = "png") -> dict[str, dict[int, str]]:
     """
     Parses a directory containing time series images.
 
@@ -75,21 +90,25 @@ def parse_dir_for_time_series(input_dir, ext: str = "png") -> dict[str, dict[int
     if not op.isdir(input_dir):
         raise ValueError(f"Directory {input_dir} not found.")
     image_time_series = defaultdict(dict)
-    suffix = ext if ext.startswith((".", "_")) else f".{ext}"
-    for image in sorted(glob.glob(op.join(input_dir, f"*{suffix}"))):
-        filename = op.basename(image)
-        stem = filename[: -len(suffix)]
-        parts = stem.split("_")
-        if len(parts) == 1:
-            barcode = parts[0]
-            time_point = -1
+    suffix = ext if isinstance(ext, tuple) else (ext if ext.startswith((".", "_")) else f".{ext}")
+    images = sorted(p for p in Path(input_dir).iterdir()
+                    if p.is_file() and p.name.lower().endswith(suffix))
+    for image_path in images:
+        image = str(image_path)
+        if isinstance(ext, tuple):
+            barcode, time_point = _parse_image_name(image)
         else:
-            barcode, time_label = parts
-            if not barcode or not time_label.startswith("d"):
-                raise ValueError
-            time_point = int(time_label[1:])
-            if time_point < 0:
-                raise ValueError
+            filename = op.basename(image)
+            parts = filename[: -len(suffix)].split("_")
+            if len(parts) == 1:
+                barcode, time_point = parts[0], -1
+            else:
+                barcode, time_label = parts
+                if not barcode or not time_label.startswith("d"):
+                    raise ValueError
+                time_point = int(time_label[1:])
+                if time_point < 0:
+                    raise ValueError
         if time_point in image_time_series[barcode]:
             previous = image_time_series[barcode][time_point]
             raise ValueError(
@@ -103,7 +122,7 @@ def parse_dir_for_time_series(input_dir, ext: str = "png") -> dict[str, dict[int
 def _get_time_points(
     input_dir: str,
     time: int | str | dict[str, int | str] = "default",
-    ext: str = "png",
+    ext: str | tuple = "png",
     missing_tp: str = "silence",
 ) -> tuple[list[str], list[str]]:
     """
@@ -126,7 +145,7 @@ def _get_time_points(
     ts_dict = parse_dir_for_time_series(input_dir, ext=ext)
 
     if not ts_dict:
-        raise ValueError(f"No .{ext.lstrip('.')} images found in {input_dir}.")
+        raise ValueError(f"No {ext} images found in {input_dir}.")
 
     for barcode, time_points in ts_dict.items():
         if isinstance(time, dict):
@@ -181,7 +200,7 @@ def _get_time_points(
 
 
 def read_file_list(
-    input_dir: str, time: int | str = "default"
+    input_dir: str, time: int | str = "default", ext: str | tuple = "png"
 ) -> tuple[list[str], list[str], list[str]]:
     """
     Reads a list of image files from a directory, ensuring consistency between red and
@@ -199,8 +218,8 @@ def read_file_list(
     """
     if not op.isdir(input_dir):
         raise ValueError(f"Directory {input_dir} not found.")
-    red_labels, red_images = _get_time_points(f"{input_dir}/red_rgb", time)
-    white_labels, white_images = _get_time_points(f"{input_dir}/white_rgb", time)
+    red_labels, red_images = _get_time_points(f"{input_dir}/red_rgb", time, ext=ext)
+    white_labels, white_images = _get_time_points(f"{input_dir}/white_rgb", time, ext=ext)
 
     # Determine the differences between red and white labels
     missing_in_red = set(white_labels) - set(red_labels)
@@ -229,7 +248,93 @@ def read_file_list(
             f"in {input_dir}."
         )
 
-    return red_labels, red_images, white_images
+    white_by_label = dict(zip(white_labels, white_images))
+    return red_labels, red_images, [white_by_label[label] for label in red_labels]
+
+
+def resolve_plate_inputs(input_path, mode, white_path=None, time_label="max"):
+    """Resolve only declared single inputs or the two supported batch layouts."""
+    source = Path(input_path)
+    if not source.is_file() and not source.is_dir():
+        raise ValueError(f"Input path {input_path} is neither a file nor a directory.")
+    if mode not in {"dual", "epi-only", "auto"}:
+        raise ValueError(f"Unknown detection mode: {mode}")
+    if mode == "auto":
+        if source.is_file():
+            raise ValueError("Single plates require --mode dual or --mode epi-only.")
+        if (source / "red_rgb").is_dir():
+            mode = "dual"
+        elif (source / "white_rgb").is_dir():
+            mode = "epi-only"
+        else:
+            raise ValueError("Unrecognized layout; specify a single-plate mode or provide white_rgb.")
+    if white_path is not None and (mode != "dual" or source.is_dir()):
+        raise ValueError("--white_path is only for a dual single plate.")
+    if source.is_file():
+        if source.suffix.lower() not in IMAGE_EXTENSIONS:
+            raise ValueError(f"Unsupported image: {source}")
+        label = _parse_image_name(source)[0]
+        if mode == "epi-only":
+            return mode, {label: {"epi_path": str(source), "trans_path": None}}
+        if white_path is None or not Path(white_path).is_file():
+            raise ValueError("Dual single-plate detection requires --white_path.")
+        if Path(white_path).suffix.lower() not in IMAGE_EXTENSIONS:
+            raise ValueError(f"Unsupported image: {white_path}")
+        if _parse_image_name(white_path)[0] != label:
+            raise ValueError("Red and white images must have matching barcodes.")
+        if source.resolve() == Path(white_path).resolve():
+            raise ValueError("Dual mode requires two distinct images.")
+        return mode, {label: {"epi_path": str(white_path), "trans_path": str(source)}}
+    required = {"white_rgb"} | ({"red_rgb"} if mode == "dual" else set())
+    allowed = required | {name.replace("rgb", "grayscale") for name in required}
+    directories = {p.name for p in source.iterdir() if p.is_dir()}
+    if not required <= directories or directories - allowed or any(
+        p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS for p in source.iterdir()
+    ):
+        raise ValueError(f"{mode} batch requires {', '.join(sorted(required))}; no other image layout is accepted.")
+    if any(p.is_dir() for name in required for p in (source / name).iterdir()):
+        raise ValueError("Image folders must be flat.")
+    if mode == "dual":
+        labels, red, white = read_file_list(str(source), time_label, ext=IMAGE_EXTENSIONS)
+    else:
+        labels, white = _get_time_points(str(source / "white_rgb"), time_label, ext=IMAGE_EXTENSIONS)
+        red = [None] * len(labels)
+    if not labels:
+        raise ValueError(f"No plates selected in {input_path}.")
+    return mode, {b: {"epi_path": w, "trans_path": r} for b, r, w in zip(labels, red, white)}
+
+
+def write_plate_inputs(output_dir, image_dir, mode, plates):
+    """Store paths relative to the root later supplied as --image_dir."""
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    relative = {b: {k: os.path.relpath(p, image_dir) if p is not None else None
+                    for k, p in images.items()} for b, images in plates.items()}
+    with open(Path(output_dir) / "inputs.json", "w") as stream:
+        json.dump({"mode": mode, "plates": relative}, stream, indent=2)
+
+
+def read_plate_inputs(data_dir, image_dir):
+    """Read an existing selection, never infer its mode or select new time points."""
+    with open(Path(data_dir) / "inputs.json") as stream:
+        inputs = json.load(stream)
+    mode, plates = inputs["mode"], inputs["plates"]
+    if mode not in {"dual", "epi-only"} or not plates:
+        raise ValueError("Invalid inputs.json.")
+    resolved = {}
+    for barcode, images in plates.items():
+        if set(images) != {"epi_path", "trans_path"} or not images["epi_path"] or (
+            (images["trans_path"] is not None) != (mode == "dual")
+        ):
+            raise ValueError(f"Invalid inputs.json entry for {barcode}.")
+        resolved[barcode] = {k: os.path.normpath(Path(image_dir) / p) if p is not None else None
+                             for k, p in images.items()}
+        for path in resolved[barcode].values():
+            if path is not None and not Path(path).is_file():
+                raise ValueError(f"Input image not found: {path}")
+            if path is not None and (Path(path).suffix.lower() not in IMAGE_EXTENSIONS
+                                     or _parse_image_name(path)[0] != barcode):
+                raise ValueError(f"Input image does not match barcode {barcode}: {path}")
+    return resolved
 
 
 # def read_file_list(

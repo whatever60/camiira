@@ -3,7 +3,9 @@
 import argparse
 import os
 import json
+import warnings
 from functools import singledispatch
+from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
@@ -16,7 +18,9 @@ from skimage.feature import peak_local_max
 from skimage.segmentation import random_walker
 from rich import print as rprint
 
-from .utils import read_config, read_file_list, add_contours
+from .utils import (
+    read_config, read_file_list, add_contours, resolve_plate_inputs, write_plate_inputs,
+)
 from .detector import CAMIIColonyDetector
 
 
@@ -55,67 +59,87 @@ def detect_colony_batch(
 ) -> list[tuple[pl.DataFrame, list[np.ndarray]]]:
     if config_path is None:
         raise ValueError("config_path is required for batch colony detection.")
-    image_label_list, image_trans_list, image_epi_list = read_file_list(
-        input_dir, time_label
-    )
-    config = read_config(config_path)
+    labels, red, white = read_file_list(input_dir, time_label)
+    return _detect_colony_pairs(zip(labels, red, white), output_dir, calib_param,
+                                read_config(config_path), toss_red)
+
+
+def _detect_colony_pairs(image_pairs, output_dir, calib_param, config, toss_red=False):
+    plates = {b: {"trans_path": r, "epi_path": w} for b, r, w in image_pairs}
+    return _detect_plates(plates, output_dir, calib_param, config, toss_red)
+
+
+def _detect_plates(plates, output_dir, calib_param, config, toss_red=False):
+    """One per-plate loop; retain the established detector for each acquisition."""
     if output_dir is not None:
         os.makedirs(output_dir, exist_ok=True)
     ret = []
-    for image_label, image_trans_path, image_epi_path in zip(
-        image_label_list, image_trans_list, image_epi_list
-    ):
-        image_trans_raw = cv.imread(image_trans_path, 0).astype(np.float32)
-        image_epi_raw = cv.imread(image_epi_path, cv.IMREAD_COLOR).astype(np.float32)
-        # calib_param = None
-        image_trans, image_epi = correct_image(
-            config, image_trans_raw, image_epi_raw, calib_param, toss_red
-        )
+    for image_label, paths in plates.items():
+        epi_raw = cv.imread(paths["epi_path"], cv.IMREAD_COLOR)
+        if epi_raw is None:
+            raise ValueError(f"Could not read image: {paths['epi_path']}")
+        trans_raw = epi_raw
+        image_epi = None
+        if paths["trans_path"] is not None:
+            trans_raw = cv.imread(paths["trans_path"], 0)
+            if trans_raw is None:
+                raise ValueError(f"Could not read image: {paths['trans_path']}")
+            trans_raw = trans_raw.astype(np.float32)
+            epi_raw = epi_raw.astype(np.float32)
+            image_trans, image_epi = correct_image(
+                config, trans_raw, epi_raw, calib_param, toss_red
+            )
+            contours = detect_colony(image_trans, config)
+        else:
+            detector = CAMIIColonyDetector(
+                calib_param=calib_param, **_single_detector_options(config)
+            )
+            contours = detector.detect(epi_raw)
+            image_trans = detector.image_corrected_gs
         rprint("Detecting colonies for", image_label)
-        contours = detect_colony(image_trans, config)
         contours, df = colony_qc(image_trans, contours, config)
-        # add channel stats
-        df = pl.concat(
-            [
-                df,
-                pl.from_dict(
-                    _calc_contour_channel_mean_std(contours, image_trans, image_epi)
-                ),
-            ],
-            how="horizontal",
-        )
+        if image_epi is not None:
+            df = pl.concat([
+                df, pl.from_dict(_calc_contour_channel_mean_std(contours, image_trans, image_epi))
+            ], how="horizontal")
         df = _modify_output_object_colony_detection(df, image_label, config)
-        contours = [
-            cnt + np.array([config["crop_x_min"], config["crop_y_min"]])
-            for cnt in contours
-        ]
+        offset = np.array([config["crop_x_min"] or 0, config["crop_y_min"] or 0])
+        contours = [cnt + offset for cnt in contours]
         ret.append((df, contours))
         if output_dir is None:
             continue
-        image_trans_pin = add_contours(
-            image_trans_raw,
-            contours,
-            df[["center_x", "center_y"]].to_numpy(),
-            config["plate_qc_colony_contour_pixel"],
-            config["plate_qc_colony_contour_pixel"],
-        )
-        image_epi_pin = add_contours(
-            image_epi_raw,
-            contours,
-            df[["center_x", "center_y"]].to_numpy(),
-            config["plate_qc_colony_contour_pixel"],
-            config["plate_qc_colony_contour_pixel"],
-        )
+        centers = df[["center_x", "center_y"]].to_numpy()
+        pixel = config["plate_qc_colony_contour_pixel"]
+        trans_overlay = add_contours(trans_raw, contours, centers, pixel, pixel)
+        epi_overlay = (add_contours(epi_raw, contours, centers, pixel, pixel)
+                       if image_epi is not None else None)
         _save_outputs_colony_detection(
-            df,
-            contours,
-            image_label,
-            image_epi_path,
-            image_trans_pin,
-            image_epi_pin,
-            output_dir,
+            df, contours, image_label, paths["epi_path"],
+            trans_overlay, epi_overlay, output_dir,
         )
     return ret
+
+
+def detect_colonies(
+    input_path: str,
+    output_dir: str,
+    calib_param: str | None = None,
+    config_path: str | None = None,
+    *,
+    mode: str = "auto",
+    white_path: str | None = None,
+    time_label: str | int = "max",
+    toss_red: bool = False,
+) -> None:
+    """Process dual or epi-only plates, singly or in a strictly laid-out batch."""
+    source = Path(input_path)
+    mode, plates = resolve_plate_inputs(input_path, mode, white_path, time_label)
+    if toss_red and mode != "dual":
+        raise ValueError("--toss_red applies only to dual mode.")
+    if config_path is None:
+        raise ValueError("config_path is required for colony detection.")
+    _detect_plates(plates, output_dir, calib_param, read_config(config_path), toss_red)
+    write_plate_inputs(output_dir, source.parent if source.is_file() else source, mode, plates)
 
 
 def detect_colony_single(
@@ -124,74 +148,14 @@ def detect_colony_single(
     calib_param: str | None = None,
     config_path: str | None = None,
 ) -> None:
-    """Detect colonies in one image without requiring a paired white-light image."""
-    # read config, image label, and the image itself.
+    """Compatibility entry point for the historical single-image detector."""
     if config_path is None:
         raise ValueError("config_path is required for single-image colony detection.")
-    config = read_config(config_path)
-    # config["calib_contrast_trans_alpha"] = 1
-    # config["calib_contrast_trans_beta"] = 255
-    # config["crop_y_min"] = 0
-    # config["crop_y_max"] = None
-    # config["crop_x_min"] = 0
-    # config["crop_x_max"] = None
-    image_label = os.path.basename(input_path).split(".")[0].split("_")[0]
-    rprint("Detecting colonies for", image_label)
-    image = cv.imread(input_path)
-    if image is None:
-        raise ValueError(f"Could not read image: {input_path}")
-    # image_trans_raw_cropped = image_trans_raw[
-    #     image_trans_raw.shape[0] // 10 : 9 * image_trans_raw.shape[0] // 10,
-    #     image_trans_raw.shape[1] // 10 : 9 * image_trans_raw.shape[1] // 10,
-    # ]
-    # image_trans_raw_cropped = image_trans_raw
-    # config["crop_x_min"] = image_trans_raw.shape[1] // 10
-    # config["crop_y_min"] = image_trans_raw.shape[0] // 10
-    # image_trans_raw_cropped = image_trans_raw_cropped[..., 2].copy()
-    # image_trans_raw_cropped = image_trans_raw_cropped.mean(axis=-1).copy()
-    # image_trans = image_trans_raw_cropped.max() - image_trans_raw_cropped
-    # image_trans = 255 - image_trans
-    # image_trans, _ = correct_image(
-    #     config, image_trans_raw, None, calib_param=calib_param
-    # )
-    # if len(image_trans.shape) == 3:
-    #     image_trans = cv.cvtColor(image_trans, cv.COLOR_BGR2GRAY)
-    # image_trans = (
-    #     image_trans.astype(np.float32)
-    #     + config["calib_contrast_trans_beta"]
-    # )
-    detector = CAMIIColonyDetector(
-        calib_param=calib_param,
-        **_single_detector_options(config),
-    )
-    contours = detector.detect(image)
-
-    if output_dir is None:
-        output_dir = os.path.dirname(input_path)
-    os.makedirs(output_dir, exist_ok=True)
-
-    contours, df = colony_qc(detector.image_corrected_gs, contours, config)
-    df = _modify_output_object_colony_detection(df, image_label, config)
-    crop_offset = np.array(
-        [config["crop_x_min"] or 0, config["crop_y_min"] or 0]
-    )
-    contours = [cnt + crop_offset for cnt in contours]
-
-    image_trans_pin = add_contours(
-        image,
-        contours,
-        df[["center_x", "center_y"]].to_numpy(),
-        config["plate_qc_colony_contour_pixel"],
-        config["plate_qc_colony_contour_pixel"],
-    )
-    _save_outputs_colony_detection(
-        df,
-        contours,
-        image_label,
-        input_path,
-        image_trans_pin,
-        image_epi=None,
-        output_dir=output_dir,
+    label = os.path.basename(input_path).split(".")[0].split("_")[0]
+    _detect_plates(
+        {label: {"epi_path": input_path, "trans_path": None}},
+        output_dir if output_dir is not None else os.path.dirname(input_path),
+        calib_param, read_config(config_path),
     )
 
 
@@ -309,10 +273,12 @@ def _detect(
     )
 
     # edge detection and contouring
-    try:
-        threshold2 = np.percentile(arr_res_bg.flatten(), canny_upper_percentile)
-    except IndexError:  # happens when image_res_gb is nearly all zeros
-        threshold2 = 0
+    # Match CAMII's nonzero population without random sampling.
+    foreground = arr_res_bg[arr_res_bg != 0]
+    threshold2 = (
+        np.percentile(foreground, canny_upper_percentile)
+        if foreground.size else 0
+    )
     contours, _ = cv.findContours(
         cv.erode(
             src=cv.dilate(
@@ -351,6 +317,9 @@ def detect_colony(image_trans: np.ndarray, config: dict) -> pl.DataFrame:
 def colony_qc(
     image: np.ndarray, contours: list[np.ndarray], config: dict
 ) -> tuple[list[np.ndarray], pl.DataFrame]:
+    # Point/line contours have no region or finite centroid. Remove them before
+    # calculating moments and constructing the spatial index.
+    contours = [cnt for cnt in contours if cv.contourArea(cnt) > 0]
     no_cnt_flag = 0
     if not contours:
         contours = [np.array([[0, 0], [0, 1], [1, 1], [1, 0]]).reshape(-1, 1, 2)]
@@ -431,6 +400,7 @@ def colony_qc(
             for cnt, need_pp in zip(contours, df_contour["need_pp"])
             if need_pp
             for j in postprocess_contour(cnt, image, config)
+            if cv.contourArea(j) > 0
         ]
     else:
         contours_pp = []
@@ -499,6 +469,7 @@ def colony_qc(
     ).filter(pl.col("min_dist_pass") & pl.col("min_dist_pin_pass"))
 
     if no_cnt_flag:
+        contours = []
         df_contour = df_contour.clear()
     else:
         rprint(f"\t{len(contours)} colonies passed second filtering.")
@@ -607,54 +578,31 @@ def _calc_inertia_ratio(arg):
 
 @_calc_inertia_ratio.register
 def _(moms: dict) -> float:
-    denom = np.sqrt(2 * moms["mu11"] ** 2) + (moms["mu20"] - moms["mu02"]) ** 2
-    eps = 0.01
-    if denom > eps:
-        cosmin = (moms["mu20"] - moms["mu02"]) / denom
-        sinmin = 2 * moms["mu11"] / denom
-        cosmax = -cosmin
-        sinmax = -sinmin
-        imin = (
-            0.5 * (moms["mu20"] + moms["mu02"])
-            - 0.5 * (moms["mu20"] - moms["mu02"]) * cosmin
-            - moms["mu11"] * sinmin
-        )
-        imax = (
-            0.5 * (moms["mu20"] + moms["mu02"])
-            - 0.5 * (moms["mu20"] - moms["mu02"]) * cosmax
-            - moms["mu11"] * sinmax
-        )
-        inertia_ratio = imin / imax
-    else:
-        inertia_ratio = 1
-    return inertia_ratio
+    # Eigenvalue ratio of the second-central-moment matrix. The discriminant
+    # needs the square root of BOTH terms; otherwise elongation depends on
+    # contour orientation and image scale.
+    trace = moms["mu20"] + moms["mu02"]
+    discriminant = np.hypot(moms["mu20"] - moms["mu02"], 2 * moms["mu11"])
+    if trace + discriminant <= 0:
+        return 1.0
+    return float(np.clip((trace - discriminant) / (trace + discriminant), 0, 1))
 
 
 @_calc_inertia_ratio.register
 def _(df_contour: pl.DataFrame) -> pl.DataFrame:
     df_contour = (
         df_contour.with_columns(
-            denominator=2 * pl.col("mu11").abs()
-            + (pl.col("mu20") - pl.col("mu02")) ** 2
+            moment_trace=pl.col("mu20") + pl.col("mu02"),
+            moment_discriminant=((pl.col("mu20") - pl.col("mu02")) ** 2
+                                 + 4 * pl.col("mu11") ** 2).sqrt(),
         )
         .with_columns(
-            cosmin=(pl.col("mu20") - pl.col("mu02")) / pl.col("denominator"),
-            sinmin=2 * pl.col("mu11") / pl.col("denominator"),
-        )
-        .with_columns(
-            imin=0.5 * (pl.col("mu20") + pl.col("mu02"))
-            - 0.5 * (pl.col("mu20") - pl.col("mu02")) * pl.col("cosmin")
-            - pl.col("mu11") * pl.col("sinmin"),
-            imax=0.5 * (pl.col("mu20") + pl.col("mu02"))
-            + 0.5 * (pl.col("mu20") - pl.col("mu02")) * pl.col("cosmin")
-            + pl.col("mu11") * pl.col("sinmin"),
-        )
-        .with_columns(
-            inertia_ratio=pl.when(pl.col("denominator") > 1e-2)
-            .then(pl.col("imin") / pl.col("imax"))
+            inertia_ratio=pl.when(pl.col("moment_trace") + pl.col("moment_discriminant") > 0)
+            .then(((pl.col("moment_trace") - pl.col("moment_discriminant")) /
+                   (pl.col("moment_trace") + pl.col("moment_discriminant"))).clip(0, 1))
             .otherwise(1)
         )
-        .drop(["denominator", "cosmin", "sinmin", "imin", "imax"])
+        .drop(["moment_trace", "moment_discriminant"])
     )
     return df_contour
 
@@ -836,7 +784,9 @@ def postprocess_contour(
         image_trans_crop[y_start : y_end + 1, x_start : x_end + 1].astype(np.uint8),
         0,
     )
-    distance = ndimage.distance_transform_edt(image_sub_contour)
+    # Centers describe the geometric footprint, not internal dark pigmentation
+    # or zero-valued pixels in an otherwise single colony.
+    distance = ndimage.distance_transform_edt(image_sub_contour_binary)
     peak_idx = peak_local_max(
         distance,
         footprint=np.ones(
@@ -906,7 +856,7 @@ def main():
         help=(
             "Either one image readable by OpenCV (for example BMP or PNG), or a "
             "transformed-image directory containing red_rgb and white_rgb "
-            "subdirectories."
+            "subdirectories. Epi-only batches require a white_rgb subdirectory."
         ),
     )
     parser.add_argument(
@@ -922,8 +872,7 @@ def main():
         type=str,
         default=None,
         help=(
-            "Optional path to a calibration .npz file. If omitted, batch detection "
-            "uses unity calibration and single-image detection skips calibration."
+            "Optional path to a calibration .npz file. Omit it to skip calibration."
         ),
     )
     parser.add_argument(
@@ -946,9 +895,33 @@ def main():
         ),
     )
     parser.add_argument("--toss_red", action="store_true", help="Toss the red channel.")
+    parser.add_argument(
+        "--mode", choices=("dual", "epi-only", "auto"), default=None,
+        help=(
+            "Dual or epi-only inputs. Auto recognizes batch channel folders only. "
+            "Omitting mode uses deprecated legacy file/directory dispatch."
+        ),
+    )
+    parser.add_argument(
+        "--white_path", default=None,
+        help="White epi image paired with a single red transmission image.",
+    )
 
     args = parser.parse_args()
-    if os.path.isdir(args.input_path):
+    if args.mode is None and args.white_path is None:
+        warnings.warn(
+            "Detection without --mode uses a deprecated legacy CLI interface. "
+            "Its behavior is unchanged; specify --mode dual or --mode epi-only.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    if args.mode is not None or args.white_path is not None:
+        detect_colonies(
+            args.input_path, args.output_dir, args.calib_param_path, args.config_path,
+            mode=args.mode or "auto", white_path=args.white_path,
+            time_label=args.time_label, toss_red=args.toss_red,
+        )
+    elif os.path.isdir(args.input_path):
         detect_colony_batch(
             args.input_path,
             args.output_dir,
