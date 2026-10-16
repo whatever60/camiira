@@ -16,8 +16,7 @@ import pandas as pd
 import networkx as nx
 from rich import print as rprint
 
-# from align import find_affine, get_query2target_func, find_mutual_pairs
-from align import Aligner
+from .align import Aligner
 from .utils import _get_time_points, read_table
 
 

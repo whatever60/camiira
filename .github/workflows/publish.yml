@@ -35,6 +35,13 @@ jobs:
         env:
           MPLBACKEND: Agg
         run: python -m unittest discover -s tests
+      - name: Smoke-test installed CLI commands
+        env:
+          MPLBACKEND: Agg
+        run: |
+          for command in detect_colonies.py calc_calib_params.py correct_coords.py data_transform.py select_colonies.py draw_interaction.py isolate_interaction.py; do
+            "$command" --help > /dev/null
+          done
 
   build:
     name: Build and verify distributions

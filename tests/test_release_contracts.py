@@ -123,6 +123,19 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertNotIn("pdb.set_trace", source)
         self.assertNotIn("from detect_colonies import", source)
 
+    def test_isolate_cli_resolves_aligner_inside_the_package(self):
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(REPO_ROOT / "src")
+        completed = subprocess.run(
+            [sys.executable, "-m", "camiira.isolate_interaction", "--help"],
+            cwd=REPO_ROOT.parent,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage:",completed.stdout)
+
     @unittest.skipUnless(
         importlib.util.find_spec("polars"),
         "requires the complete project environment",
