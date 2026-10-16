@@ -194,6 +194,11 @@ class ReleaseContractTests(unittest.TestCase):
                     mock.patch.object(
                         select_colonies, "_save_modified"
                     ) as save_modified,
+                    mock.patch(
+                        "numpy.in1d",
+                        side_effect=AssertionError("np.in1d is removed in current NumPy"),
+                        create=True,
+                    ),
                     warnings.catch_warnings(record=True) as observed_warnings,
                 ):
                     warnings.simplefilter("always")

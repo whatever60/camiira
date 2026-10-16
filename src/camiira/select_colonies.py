@@ -747,7 +747,7 @@ def pick_colony_post(
                     "This is not supported."
                 )
 
-            intersect = np.in1d(cnt_ids_post, cnt_ids)
+            intersect = np.isin(cnt_ids_post, cnt_ids)
             if not intersect.all():
                 # update dict_border
                 annots_new = np.array(dict_border_post["annotations"], dtype=object)[
